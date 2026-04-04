@@ -104,7 +104,7 @@ def is_relevant(paper: dict, topic: str) -> bool:
         "Answer only 'yes' or 'no'."
     )
     response = _gemini_client.models.generate_content(
-        model="gemini-2.0-flash", contents=prompt
+        model="gemini-2.5-flash", contents=prompt
     )
     return response.text.strip().lower().startswith("yes")
 
@@ -117,7 +117,7 @@ def summarize_paper(paper: dict) -> str:
         "Focus on what was studied, what was found, and why it matters."
     )
     response = _gemini_client.models.generate_content(
-        model="gemini-2.0-flash", contents=prompt
+        model="gemini-2.5-flash", contents=prompt
     )
     return response.text.strip()
 
