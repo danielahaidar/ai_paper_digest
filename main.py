@@ -1,4 +1,5 @@
 import os
+import csv
 import smtplib
 import requests
 from email.mime.multipart import MIMEMultipart
@@ -48,11 +49,11 @@ TOPICS = {
 SEMANTIC_SCHOLAR_URL = "https://api.semanticscholar.org/graph/v1/paper/search"
 
 
-def fetch_papers(query: str, days_back: int = 7, limit: int = 5) -> list[dict]:
+def fetch_papers(query: str, days_back: int = 10, limit: int = 10) -> list[dict]:
     since = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
     params = {
         "query": query,
-        "fields": "title,authors,year,publicationDate,publicationTypes,venue,externalIds,abstract,url",
+        "fields": "title,authors,year,publicationDate,publicationTypes,venue,externalIds,abstract,url,citationCount,influentialCitationCount",
         "publicationDateOrYear": f"{since}:",
         "limit": limit,
     }
@@ -94,6 +95,20 @@ def get_paper_url(paper: dict) -> str:
     return paper.get("url", "")
 
 
+def is_relevant(paper: dict, topic: str) -> bool:
+    prompt = (
+        f"Topic: {topic}\n\n"
+        f"Title: {paper['title']}\n\n"
+        f"Abstract: {paper['abstract']}\n\n"
+        "Does this paper genuinely belong to the topic above? "
+        "Answer only 'yes' or 'no'."
+    )
+    response = _gemini_client.models.generate_content(
+        model="gemini-2.5-flash", contents=prompt
+    )
+    return response.text.strip().lower().startswith("yes")
+
+
 def summarize_paper(paper: dict) -> str:
     prompt = (
         f"Title: {paper['title']}\n\n"
@@ -102,7 +117,7 @@ def summarize_paper(paper: dict) -> str:
         "Focus on what was studied, what was found, and why it matters."
     )
     response = _gemini_client.models.generate_content(
-        model="gemini-2.0-flash-lite", contents=prompt
+        model="gemini-2.5-flash", contents=prompt
     )
     return response.text.strip()
 
@@ -144,6 +159,31 @@ def build_email_html(digest: dict[str, list[dict]]) -> str:
     """
 
 
+ARCHIVE_FILE = os.path.join(os.path.dirname(__file__), "archive.tsv")
+ARCHIVE_HEADERS = ["date_sent", "topic", "title", "authors", "venue", "url", "summary"]
+
+
+def archive_papers(digest: dict[str, list[dict]]):
+    date_sent = datetime.now().strftime("%Y-%m-%d")
+    file_exists = os.path.isfile(ARCHIVE_FILE)
+    with open(ARCHIVE_FILE, "a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=ARCHIVE_HEADERS, delimiter="\t")
+        if not file_exists:
+            writer.writeheader()
+        for topic, papers in digest.items():
+            for p in papers:
+                authors = ", ".join(a.get("name", "") for a in p.get("authors", []))
+                writer.writerow({
+                    "date_sent": date_sent,
+                    "topic": topic,
+                    "title": p.get("title", ""),
+                    "authors": authors,
+                    "venue": p.get("venue") or "",
+                    "url": get_paper_url(p),
+                    "summary": p.get("summary", ""),
+                })
+
+
 def send_email(subject: str, html_body: str):
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
@@ -156,8 +196,19 @@ def send_email(subject: str, html_body: str):
         server.sendmail(GMAIL_ADDRESS, RECIPIENT_EMAIL, msg.as_string())
 
 
+def load_recent_titles(runs: int = 3) -> set[str]:
+    """Return titles sent in the last `runs` digest runs."""
+    if not os.path.isfile(ARCHIVE_FILE):
+        return set()
+    with open(ARCHIVE_FILE, newline="", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f, delimiter="\t"))
+    dates = sorted({r["date_sent"] for r in rows}, reverse=True)[:runs]
+    return {r["title"].lower() for r in rows if r["date_sent"] in dates}
+
+
 def main():
     all_papers: dict[str, list[dict]] = {}
+    recent_titles = load_recent_titles()
 
     for topic, queries in TOPICS.items():
         topic_papers = []
@@ -165,11 +216,14 @@ def main():
             results = fetch_papers(query)
             topic_papers.extend([p for p in results if is_valid_paper(p)])
 
-        topic_papers = deduplicate(topic_papers)[:2]
+        topic_papers = deduplicate(topic_papers)
+        topic_papers = [p for p in topic_papers if p.get("title", "").lower() not in recent_titles]
+        topic_papers = [p for p in topic_papers if is_relevant(p, topic)]
+        topic_papers.sort(key=lambda p: p.get("citationCount") or 0, reverse=True)
+        topic_papers = topic_papers[:2]
 
         for paper in topic_papers:
             paper["summary"] = summarize_paper(paper)
-            time.sleep(13)  # stay under 5 req/min free tier limit
 
         all_papers[topic] = topic_papers
         print(f"{topic}: {len(topic_papers)} papers")
@@ -181,6 +235,7 @@ def main():
 
     html = build_email_html(all_papers)
     subject = f"AI Research Digest — {datetime.now().strftime('%B %d, %Y')}"
+    archive_papers(all_papers)
     send_email(subject, html)
     print(f"Email sent: {subject}")
 
