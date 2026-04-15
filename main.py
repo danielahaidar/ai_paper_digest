@@ -2,13 +2,14 @@ import os
 import csv
 import smtplib
 import requests
+import time
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from google import genai
+from google.genai import errors as genai_errors
 import schedule
-import time
 
 load_dotenv()
 
@@ -20,30 +21,52 @@ RECIPIENT_EMAIL = os.environ["RECIPIENT_EMAIL"]
 
 TOPICS = {
     "AI for Education": [
-        "AI education", "LLM tutoring", "adaptive learning AI",
-        "artificial intelligence classroom", "AI teaching"
+        "LLM tutoring students", "AI adaptive learning",
+        "large language model education", "AI writing feedback students",
+        "generative AI student learning outcomes"
     ],
     "AI for Health": [
-        "AI healthcare", "clinical AI", "medical LLM",
-        "artificial intelligence diagnosis", "AI radiology"
+        "large language model clinical", "AI medical diagnosis",
+        "LLM radiology pathology", "AI mental health intervention",
+        "foundation model healthcare"
     ],
     "Model Behavior": [
-        "LLM alignment", "model behavior", "AI safety",
-        "large language model evaluation", "AI robustness"
+        "LLM alignment", "AI misalignment", "agentic AI safety",
+        "large language model evaluation", "LLM robustness",
+        "AI deception", "AI goal misgeneralization", "LLM safety behavior",
+        "AI agent misalignment", "language model alignment"
     ],
     "AI Ethics": [
-        "AI ethics", "algorithmic bias", "AI fairness",
-        "responsible AI", "AI accountability"
+        "AI ethics empirical", "algorithmic bias language model",
+        "AI fairness machine learning", "LLM harmful outputs",
+        "AI discrimination societal impact"
     ],
-    "Breaking News in Tech": [
-        "AI breakthrough", "emerging AI technology", "tech innovation",
-        "artificial intelligence advances", "machine learning breakthrough",
-        "new AI model", "AI research breakthrough"
+    "AI Research Advances": [
+        "large language model novel architecture", "LLM reasoning new method",
+        "multimodal AI new capability", "reinforcement learning from human feedback",
+        "frontier AI model capabilities"
     ],
     "Major AI Players": [
-        "OpenAI research", "Google AI", "Anthropic AI", "Meta AI",
-        "Microsoft AI", "xAI research", "DeepMind AI", "AI company research"
+        "OpenAI GPT research", "Google DeepMind research",
+        "Anthropic Claude research", "Meta LLaMA research",
+        "Microsoft AI research paper"
     ],
+    "Human-AI Interaction & Psychology": [
+        "chatbot user psychology", "AI companion user loneliness",
+        "human trust in AI systems", "anthropomorphism chatbot",
+        "LLM user behavior study", "AI chatbot mental health user",
+        "human perception AI agent"
+    ],
+}
+
+TOPIC_DESCRIPTIONS = {
+    "AI for Education": "Research on using AI, LLMs, or machine learning to support student learning, tutoring, or educational outcomes.",
+    "AI for Health": "Research applying AI or large language models to medical diagnosis, clinical decision-making, or healthcare.",
+    "Model Behavior": "Research on how AI and LLM models behave, including alignment, misalignment, safety, deception, and robustness.",
+    "AI Ethics": "Research on ethical issues, bias, fairness, or societal harms caused by AI and machine learning systems.",
+    "AI Research Advances": "New research advancing the capabilities of AI, LLMs, or machine learning — novel architectures, training methods, or benchmarks. Must be about artificial intelligence or machine learning, not other fields.",
+    "Major AI Players": "Research papers published by or about major AI organizations such as OpenAI, Google DeepMind, Anthropic, Meta AI, or Microsoft Research.",
+    "Human-AI Interaction & Psychology": "Research on how people psychologically perceive, trust, relate to, or are affected by AI systems and chatbots.",
 }
 
 SEMANTIC_SCHOLAR_URL = "https://api.semanticscholar.org/graph/v1/paper/search"
@@ -95,18 +118,32 @@ def get_paper_url(paper: dict) -> str:
     return paper.get("url", "")
 
 
+def _gemini_generate(prompt: str, retries: int = 5) -> str:
+    delay = 10
+    for attempt in range(retries):
+        try:
+            response = _gemini_client.models.generate_content(
+                model="gemini-2.5-flash-lite", contents=prompt
+            )
+            return response.text.strip()
+        except genai_errors.ServerError as e:
+            if e.status_code == 503 and attempt < retries - 1:
+                time.sleep(delay)
+                delay *= 2
+            else:
+                raise
+
+
 def is_relevant(paper: dict, topic: str) -> bool:
+    description = TOPIC_DESCRIPTIONS.get(topic, topic)
     prompt = (
-        f"Topic: {topic}\n\n"
+        f"Topic: {description}\n\n"
         f"Title: {paper['title']}\n\n"
         f"Abstract: {paper['abstract']}\n\n"
         "Does this paper genuinely belong to the topic above? "
         "Answer only 'yes' or 'no'."
     )
-    response = _gemini_client.models.generate_content(
-        model="gemini-2.5-flash", contents=prompt
-    )
-    return response.text.strip().lower().startswith("yes")
+    return _gemini_generate(prompt).lower().startswith("yes")
 
 
 def summarize_paper(paper: dict) -> str:
@@ -116,10 +153,7 @@ def summarize_paper(paper: dict) -> str:
         "Write a 3-sentence plain-English summary of this paper suitable for a weekly digest. "
         "Focus on what was studied, what was found, and why it matters."
     )
-    response = _gemini_client.models.generate_content(
-        model="gemini-2.5-flash", contents=prompt
-    )
-    return response.text.strip()
+    return _gemini_generate(prompt)
 
 
 def build_email_html(digest: dict[str, list[dict]]) -> str:
@@ -213,7 +247,7 @@ def main():
     for topic, queries in TOPICS.items():
         topic_papers = []
         for query in queries:
-            results = fetch_papers(query)
+            results = fetch_papers(query, days_back=30)
             topic_papers.extend([p for p in results if is_valid_paper(p)])
 
         topic_papers = deduplicate(topic_papers)

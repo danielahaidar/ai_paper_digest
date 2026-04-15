@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git -C /Users/danielahaidar/Desktop/ai_projects/ai_paper_digest log --oneline -5)",
+      "Bash(git -C /Users/danielahaidar/Desktop/ai_projects/ai_paper_digest show HEAD:main.py)",
+      "Bash(git -C /Users/danielahaidar/Desktop/ai_projects/ai_paper_digest show 94deb03:main.py)",
+      "Bash(/Users/danielahaidar/miniforge3/envs/ai_projects/bin/python -c ':*)",
+      "Bash(git -C /Users/danielahaidar/Desktop/ai_projects/ai_paper_digest add .github/workflows/weekly_digest.yml)",
+      "Bash(git -C /Users/danielahaidar/Desktop/ai_projects/ai_paper_digest commit -m \"Fix archive commit permissions\")",
+      "Read(//Users/danielahaidar/Desktop/ai_projects/**)"
+    ],
+    "additionalDirectories": [
+      "/Users/danielahaidar/Desktop/ai_projects/personal_website/app/(main)/life",
+      "/Users/danielahaidar/Desktop/ai_projects/personal_website/components",
+      "/Users/danielahaidar/Desktop/ai_projects/personal_website/app"
+    ]
+  }
+}
